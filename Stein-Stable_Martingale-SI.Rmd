@@ -1,0 +1,379 @@
+---
+title: "Stable approximation of heavy-tailed martingale differences and Markov Chains"
+author: "S. M. Manou-Abi and A. F. Ouedraogo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+--------
+
+<!--
+Reproduces Figures 1-4 and Tables 1-3 of the article
+"Stein's method and the Lindeberg principle for stable approximation of
+heavy-tailed martingale differences and Markov chains"
+(version for Advances in Applied Probability), checks Example 3.37 (birth and death environment) and reproduces
+Table 1 and Figure 3 (oscillator chain, Corollary 3.30).
+
+Notation (identical to the article)
+  * Levy measure nu_alpha(du) = (c_+ 1{u>0} + c_- 1{u<0}) |u|^{-1-alpha} du;
+    symmetric case c_+ = c_- = c, so that P(X > x) ~ (c / alpha) x^{-alpha}.
+  * Target X ~ S(alpha, 0, gamma_c, 0; 0) (Nolan, stabledist with pm = 0),
+    gamma_c^alpha = d_alpha = 2 c I_alpha.
+  * Symmetric Pareto data P(|Y| > y) = y^{-alpha}, y >= 1: c = alpha / 2.
+
+Set RUN_MC <- TRUE in the chunk "table2" to rerun the Monte Carlo experiment
+(about 30 minutes); otherwise the cached file figs/table2.csv is used when present.
+-->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 6.4, fig.height = 2.55, dpi = 150)
+```
+
+```{r packages}
+needed  <- c("stabledist", "ggplot2", "patchwork")
+missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing) > 0)
+  stop("Please install first: install.packages(c(",
+       paste0('"', missing, '"', collapse = ", "), "))")
+library(stabledist)
+library(ggplot2)
+library(patchwork)
+```
+
+# Settings and helpers
+
+```{r helpers}
+dir.create("figs", showWarnings = FALSE)
+
+COL   <- c("#2a78d6", "#eb6834", "#1baf7a", "#eda100")
+INK   <- "#0b0b0b"
+MUTED <- "#52514e"
+
+theme_paper <- theme_bw(base_size = 9, base_family = "serif") +
+  theme(plot.title = element_text(size = 9), axis.text = element_text(color = MUTED),
+        legend.title = element_blank(), legend.position = "top",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(color = "#e4e3df", linewidth = 0.3))
+
+save_fig <- function(p, name, width = 6.4, height = 2.55) {
+  ggsave(file.path("figs", paste0(name, ".pdf")), p, width = width, height = height,
+         device = cairo_pdf)
+  ggsave(file.path("figs", paste0(name, ".png")), p, width = width, height = height, dpi = 300)
+}
+
+# I_alpha = int_0^Inf (1 - cos v) v^(-1-alpha) dv = Gamma(1-alpha) cos(pi alpha/2) / alpha
+I_alpha <- function(alpha) pi / (2 * gamma(1 + alpha) * sin(pi * alpha / 2))
+
+# d_alpha = gamma_c^alpha = 2 c I_alpha for the Levy measure c |u|^{-1-alpha} du
+d_alpha <- function(alpha, c) 2 * c * I_alpha(alpha)
+gamma_c <- function(alpha, c) d_alpha(alpha, c)^(1 / alpha)
+
+# Density of S(alpha, 0, scale, 0; 0)
+dstab0 <- function(x, alpha, scale = 1)
+  dstable(x, alpha = alpha, beta = 0, gamma = scale, delta = 0, pm = 0)
+
+# Sanity check: scale of the Pareto limit (c = alpha/2) equals (alpha I_alpha)^(1/alpha)
+stopifnot(abs(gamma_c(1.5, 0.75) - (1.5 * I_alpha(1.5))^(1 / 1.5)) < 1e-12)
+```
+
+# Figure 1 — symmetric stable densities and power-law tails
+
+$S(\alpha,0,1,0;0)$ has characteristic function $e^{-|t|^\alpha}$; the density
+tail is $f(x)\sim\alpha C_\alpha x^{-1-\alpha}$, $C_\alpha=\Gamma(\alpha)\sin(\pi\alpha/2)/\pi$.
+
+```{r figure1}
+alphas1 <- c(0.8, 1.2, 1.6)
+lev1    <- c(as.character(alphas1), "2 (Gaussian)")
+x  <- seq(-6, 6, length.out = 801)
+xs <- 10^seq(-0.5, 3, length.out = 300)
+
+df1 <- rbind(
+  do.call(rbind, lapply(alphas1, function(a)
+    data.frame(x = x, density = dstab0(x, a), alpha = as.character(a)))),
+  data.frame(x = x, density = dnorm(x, 0, sqrt(2)), alpha = "2 (Gaussian)"))
+df1$alpha <- factor(df1$alpha, levels = lev1)
+
+df_tail <- rbind(
+  do.call(rbind, lapply(alphas1, function(a)
+    data.frame(x = xs, density = dstab0(xs, a), alpha = as.character(a)))),
+  data.frame(x = xs[xs < 9], density = dnorm(xs[xs < 9], 0, sqrt(2)), alpha = "2 (Gaussian)"))
+df_tail$alpha <- factor(df_tail$alpha, levels = lev1)
+df_tail <- df_tail[df_tail$density > 0, ]
+
+df_asym <- do.call(rbind, lapply(alphas1, function(a) {
+  xa <- 10^seq(0.8, 3, length.out = 50)
+  data.frame(x = xa, density = a * gamma(a) * sin(pi * a / 2) / pi * xa^(-1 - a),
+             alpha = factor(as.character(a), levels = lev1))
+}))
+
+p11 <- ggplot(df1, aes(x, density, color = alpha)) + geom_line(linewidth = 0.65) +
+  scale_color_manual(values = c(COL[1:3], INK)) +
+  labs(x = "x", y = "Density", title = "Densities") + theme_paper
+p12 <- ggplot(df_tail, aes(x, density, color = alpha)) + geom_line(linewidth = 0.65) +
+  geom_line(data = df_asym, linetype = "dotted", linewidth = 0.45) +
+  scale_color_manual(values = c(COL[1:3], INK), drop = FALSE) +
+  scale_x_log10() + scale_y_log10() +
+  coord_cartesian(xlim = c(10^-0.5, 3000), ylim = c(1e-12, 1)) +
+  labs(x = "x (log scale)", y = "Density (log scale)",
+       title = expression("Tails: " ~ f(x) %~% alpha * C[alpha] * x^{-1 - alpha})) +
+  theme_paper + theme(legend.position = "none")
+fig1 <- p11 | p12
+save_fig(fig1, "fig_stable_densities"); fig1
+```
+
+# Figure 2 — generalised CLT for symmetric Pareto data
+
+$P(|Y|>y)=y^{-\alpha}$ gives $c=\alpha/2$; the limit of $n^{-1/\alpha}\sum Y_k$ is
+$S(\alpha,0,\gamma_c,0;0)$ with $\gamma_c^\alpha=\alpha I_\alpha$. Sums are generated
+by blocks (memory about 16 MB).
+
+```{r figure2}
+set.seed(2026)
+n2 <- 2000; nsim2 <- 20000; chunk <- 1000
+sim_sum <- function(a) {
+  S <- numeric(nsim2)
+  for (i in seq(1, nsim2, by = chunk)) {
+    ni <- min(chunk, nsim2 - i + 1)
+    Y  <- matrix(sample(c(-1, 1), ni * n2, replace = TRUE) * runif(ni * n2)^(-1 / a), nrow = ni)
+    S[i:(i + ni - 1)] <- rowSums(Y) / n2^(1 / a)
+  }
+  S
+}
+panel <- function(a) {
+  S  <- sim_sum(a)
+  xx <- seq(-6, 6, length.out = 400)
+  ggplot() +
+    geom_histogram(data = data.frame(v = S[abs(S) <= 6]),
+                   aes(x = v, y = after_stat(count) / (length(S) * 12 / 96)),
+                   breaks = seq(-6, 6, length.out = 97), fill = COL[1], alpha = 0.45) +
+    geom_line(data = data.frame(x = xx, d = dstab0(xx, a, gamma_c(a, a / 2))),
+              aes(x, d), color = INK, linewidth = 0.75) +
+    labs(x = "x", y = "Density",
+         title = bquote(alpha == .(a) ~ "," ~ n^{-(2 - alpha) / alpha} == .(signif(n2^(-(2 - a) / a), 2)))) +
+    theme_paper
+}
+fig2 <- panel(1.5) | panel(1.8)
+save_fig(fig2, "fig_pareto_gclt"); fig2
+```
+
+# Table 2 — exact i.i.d. computation (no simulation)
+
+$\varphi(z)=E\cos(z\varepsilon)$ with
+$1-\varphi(z)=\alpha z^\alpha\big(I_\alpha-\sum_{k\ge1}(-1)^{k+1}z^{2k-\alpha}/((2k)!(2k-\alpha))\big)$;
+$E\cos A_n=\varphi(n^{-1/\alpha})^n$ and $E\cos X=e^{-d_\alpha}$, $d_\alpha=\alpha I_\alpha$.
+
+```{r table1}
+one_minus_phi <- function(z, a, K = 30) {
+  k <- seq_len(K)
+  a * z^a * (I_alpha(a) - sum((-1)^(k + 1) * z^(2 * k - a) / (factorial(2 * k) * (2 * k - a))))
+}
+ratio_iid <- function(a, n) {
+  d <- d_alpha(a, a / 2)
+  (exp(n * log1p(-one_minus_phi(n^(-1 / a), a))) - exp(-d)) / n^(-(2 - a) / a)
+}
+kappa <- function(a) exp(-d_alpha(a, a / 2)) * a / (2 * (2 - a))
+
+tab1 <- t(sapply(c(1.2, 1.4, 1.5, 1.6), function(a)
+  c(alpha = a, sapply(10^c(2, 4, 6, 8), function(n) ratio_iid(a, n)), kappa = kappa(a))))
+colnames(tab1) <- c("alpha", "n=1e2", "n=1e4", "n=1e6", "n=1e8", "kappa")
+write.csv(tab1, "figs/table1.csv", row.names = FALSE)
+knitr::kable(tab1, digits = 5)
+```
+
+# Table 3 — contribution of dependence (Monte Carlo)
+
+Model $X_k=\varepsilon_k+b(X_{k-1})\zeta_k$, $b(x)=\frac B2(1+\tanh x)$, $B=1$,
+$X_0=0$. $\Delta_n=E\cos M_n-E\cos A_n$ is estimated with common random numbers and
+the control variate $\sin(A_n)B_n$, whose mean is exactly $0$
+(Proposition 3.34(i)). The limit of $|\Delta_n|/n^{-(2-\alpha)/\alpha}$ is
+$\frac12 e^{-d_\alpha}\overline{b^2}$ (Proposition 3.34(iii)).
+
+```{r table2}
+RUN_MC <- !file.exists("figs/table2.csv")
+
+sim_dep <- function(a, n, R, B = 1, seed = 1) {
+  set.seed(seed)
+  X <- numeric(R); A <- numeric(R); Bs <- numeric(R); b2 <- numeric(R)
+  for (k in seq_len(n)) {
+    eps  <- sample(c(-1, 1), R, replace = TRUE) * runif(R)^(-1 / a)
+    zeta <- sample(c(-1, 1), R, replace = TRUE)
+    b    <- B / 2 * (1 + tanh(X))
+    b2   <- b2 + b^2
+    X    <- eps + b * zeta
+    A    <- A + eps
+    Bs   <- Bs + b * zeta
+  }
+  s <- n^(-1 / a); A <- A * s; Bs <- Bs * s
+  D <- cos(A + Bs) - cos(A) + sin(A) * Bs      # control variate with mean exactly 0
+  r <- n^(-(2 - a) / a)
+  c(alpha = a, n = n, ratio = abs(mean(D)) / r, se = sd(D) / sqrt(R) / r, b2bar = mean(b2) / n)
+}
+
+grid   <- expand.grid(alpha = c(1.2, 1.4, 1.5), n = c(1e2, 3e2, 1e3, 3e3, 1e4))
+grid$R <- ifelse(grid$n <= 1e3, 2e5, 4e4)
+
+if (RUN_MC) {
+  tab2 <- as.data.frame(do.call(rbind, Map(function(a, n, R) sim_dep(a, n, R),
+                                           grid$alpha, grid$n, grid$R)))
+  write.csv(tab2, "figs/table2.csv", row.names = FALSE)
+} else {
+  tab2 <- read.csv("figs/table2.csv")
+}
+tab2$limit <- 0.5 * exp(-d_alpha(tab2$alpha, tab2$alpha / 2)) * tab2$b2bar
+knitr::kable(tab2, digits = 5)
+```
+
+# Figure 4 — dependence contributes at order $n^{-(2-\alpha)/\alpha}$
+
+```{r figure3}
+tab2$alpha_f <- factor(tab2$alpha)
+tab2$delta   <- tab2$ratio * tab2$n^(-(2 - tab2$alpha) / tab2$alpha)
+lim <- aggregate(limit ~ alpha, data = tab2, FUN = mean); lim$alpha_f <- factor(lim$alpha)
+nn  <- 10^seq(1.9, 4.1, length.out = 50)
+theory <- do.call(rbind, lapply(seq_len(nrow(lim)), function(i) {
+  a <- lim$alpha[i]
+  data.frame(n = nn, alpha_f = factor(a), delta = lim$limit[i] * nn^(-(2 - a) / a))
+}))
+
+p31 <- ggplot(tab2, aes(n, delta, color = alpha_f)) +
+  geom_line(linewidth = 0.6) + geom_point(size = 1.8) +
+  geom_line(data = theory, linetype = "dashed", linewidth = 0.5) +
+  scale_color_manual(values = COL[1:3], labels = function(l) paste0("alpha = ", l)) +
+  scale_x_log10() + scale_y_log10() +
+  labs(x = "n", y = expression(abs(Delta[n])),
+       title = expression("slope " ~ -(2 - alpha) / alpha)) + theme_paper
+p32 <- ggplot(tab2, aes(n, ratio, color = alpha_f)) +
+  geom_errorbar(aes(ymin = ratio - 2 * se, ymax = ratio + 2 * se), width = 0.05, linewidth = 0.3) +
+  geom_line(linewidth = 0.6) + geom_point(size = 1.8) +
+  geom_hline(data = lim, aes(yintercept = limit, color = alpha_f), linetype = "dashed", linewidth = 0.5) +
+  scale_color_manual(values = COL[1:3]) + scale_x_log10() +
+  labs(x = "n", y = expression(abs(Delta[n]) / n^{-(2 - alpha) / alpha}),
+       title = "Renormalised (bars: +/- 2 s.e.)") +
+  theme_paper + theme(legend.position = "none")
+fig3 <- p31 | p32
+save_fig(fig3, "fig_dependence_rate"); fig3
+```
+
+
+# Example 3.37 — birth and death (reflected random walk) environment
+
+Model $X_k=\varepsilon_k+b(Z_{k-1})\zeta_k$ with $(Z_k)$ the reflected random walk
+($p_x=p$, $q_x=q$, $\rho=p/q$), $Z_0\sim\mu=\mathrm{Geom}$, $b=B\,\mathbf 1_{\{z\ge1\}}$.
+Proposition 3.36(iii): $|\Delta_n|/n^{-(2-\alpha)/\alpha}\to\frac12e^{-d_\alpha}B^2\rho$.
+
+```{r bd_env}
+RUN_BD <- !file.exists("figs/table_bd.csv")
+sim_bd <- function(a, n, R, p = 0.3, q = 0.5, B = 1, seed = 7) {
+  set.seed(seed)
+  rho <- p / q
+  Z <- rgeom(R, 1 - rho)                     # stationary law (1 - rho) rho^x
+  A <- numeric(R); Bs <- numeric(R)
+  for (k in seq_len(n)) {
+    b    <- B * (Z >= 1)
+    eps  <- sample(c(-1, 1), R, replace = TRUE) * runif(R)^(-1 / a)
+    zeta <- sample(c(-1, 1), R, replace = TRUE)
+    A <- A + eps; Bs <- Bs + b * zeta
+    u <- runif(R)
+    Z <- Z + (u < p) - ((u >= p) & (u < p + q) & (Z > 0))
+  }
+  s <- n^(-1 / a); A <- A * s; Bs <- Bs * s
+  D <- cos(A + Bs) - cos(A) + sin(A) * Bs    # control variate with mean 0
+  r <- n^(-(2 - a) / a)
+  c(alpha = a, n = n, ratio = abs(mean(D)) / r, se = sd(D) / sqrt(R) / r,
+    limit = 0.5 * exp(-d_alpha(a, a / 2)) * B^2 * rho)
+}
+gbd <- expand.grid(alpha = c(1.4, 1.5), n = c(1e2, 1e3, 1e4))
+gbd$R <- ifelse(gbd$n <= 1e3, 2e5, 4e4)
+if (RUN_BD) {
+  tab_bd <- as.data.frame(do.call(rbind, Map(sim_bd, gbd$alpha, gbd$n, gbd$R)))
+  write.csv(tab_bd, "figs/table_bd.csv", row.names = FALSE)
+} else tab_bd <- read.csv("figs/table_bd.csv")
+knitr::kable(tab_bd, digits = 5)
+```
+
+# Corollary 3.30 — oscillator chain (Table 1 and Figure 3)
+
+Kernel $p(y,z)=k(y,z)\mu(z)$ on the torus, $f=\mathrm{sign}(y)\sqrt a\,G(y)$ with $a=1$.
+$\mu$ is sampled by rejection under the uniform law (density of $\mu\le 3/2$), a
+transition from $z$ by rejection under $\mu$ (accept with probability $k(z,Y)/6$).
+Target: Lévy weight $\bar c=\frac32c^*$, $E\cos X=e^{-3c^*I_{3/2}}$. The i.i.d. benchmark
+$E\cos A_n=\varphi(n^{-2/3})^n$, $\varphi(t)=E_\mu\cos(tf)$, is computed by quadrature.
+
+```{r oscillator}
+RUN_OSC <- !file.exists("figs/table_osc.csv")
+mu_d <- function(y) (4 / 3) * (1 + 2 * cos(pi * y)^2) * sin(pi * y)^2
+kfun <- function(z, y) 3 * (sin(pi * (z + y))^2 + sin(pi * (z - y))^2) /
+  ((1 + 2 * cos(pi * z)^2) * (1 + 2 * cos(pi * y)^2))
+Gf <- function(y) 1 / (2 * (1 + 2 * cos(pi * y)^2) * sin(pi * y)^2)
+f_osc <- function(y, a = 1) sign(y) * sqrt(a) * Gf(y)
+cstar <- (4 * pi^2 / 3) * (1 / (6 * pi^2))^(3 / 2)
+cbar  <- 1.5 * cstar
+d_osc <- 2 * cbar * I_alpha(1.5)                 # E cos(tX) = exp(-d_osc |t|^1.5)
+
+sample_mu <- function(m) {
+  out <- numeric(0)
+  while (length(out) < m) {
+    y <- runif(2 * m) - 0.5
+    out <- c(out, y[runif(2 * m) * 1.5 <= mu_d(y)])
+  }
+  out[seq_len(m)]
+}
+step_osc <- function(z) {                          # one transition from each z
+  out <- numeric(length(z)); todo <- seq_along(z)
+  while (length(todo)) {
+    y  <- sample_mu(length(todo))
+    ok <- runif(length(todo)) * 6 <= kfun(z[todo], y)
+    out[todo[ok]] <- y[ok]; todo <- todo[!ok]
+  }
+  out
+}
+sim_osc <- function(n, R, seed = 11) {
+  set.seed(seed)
+  z <- sample_mu(R); S <- numeric(R)
+  for (k in seq_len(n)) { z <- step_osc(z); S <- S + f_osc(z) }
+  S * n^(-2 / 3)
+}
+phi_iid <- function(t) {                           # E_mu cos(t f), f odd
+  g <- function(y) (1 - cos(t * f_osc(y))) * mu_d(y)
+  br <- c(0, 1e-6, 1e-4, 1e-3, 1e-2, 0.05, 0.5)
+  1 - 2 * sum(sapply(seq_len(length(br) - 1), function(i)
+    integrate(g, br[i], br[i + 1], subdivisions = 5000L, rel.tol = 1e-10)$value))
+}
+if (RUN_OSC) {
+  tab_osc <- do.call(rbind, lapply(list(c(100, 2e5), c(1000, 1e5), c(10000, 2e4)), function(nr) {
+    S <- sim_osc(nr[1], nr[2]); cs <- cos(S)
+    if (nr[1] == 1000) saveRDS(S, "figs/osc_sample_n1000.rds")
+    iid <- exp(nr[1] * log(phi_iid(nr[1]^(-2 / 3))))
+    data.frame(n = nr[1], delta_chain = mean(cs) - exp(-d_osc), se = sd(cs) / sqrt(nr[2]),
+               delta_iid = iid - exp(-d_osc))
+  }))
+  write.csv(tab_osc, "figs/table_osc.csv", row.names = FALSE)
+} else tab_osc <- read.csv("figs/table_osc.csv")
+tab_osc$ratio_chain <- tab_osc$delta_chain * tab_osc$n^(1 / 3)
+tab_osc$ratio_iid   <- tab_osc$delta_iid * tab_osc$n^(1 / 3)
+knitr::kable(tab_osc, digits = 5)
+
+S  <- readRDS("figs/osc_sample_n1000.rds")
+xx <- seq(-1.5, 1.5, length.out = 400)
+p_osc1 <- ggplot() +
+  geom_histogram(data = data.frame(v = S[abs(S) <= 1.5]),
+                 aes(x = v, y = after_stat(count) / (length(S) * 3 / 96)),
+                 breaks = seq(-1.5, 1.5, length.out = 97), fill = COL[1], alpha = 0.45) +
+  geom_line(data = data.frame(x = xx, d = dstab0(xx, 1.5, d_osc^(2 / 3))), aes(x, d), color = INK) +
+  labs(x = "x", y = "Density", title = "Oscillator chain, n = 1000") + theme_paper
+long <- rbind(data.frame(n = tab_osc$n, err = abs(tab_osc$delta_chain), se = tab_osc$se, type = "chain"),
+              data.frame(n = tab_osc$n, err = abs(tab_osc$delta_iid), se = 0, type = "i.i.d. (exact)"))
+p_osc2 <- ggplot(long, aes(n, err, color = type)) + geom_point() + geom_line() +
+  geom_errorbar(aes(ymin = pmax(err - 2 * se, 1e-4), ymax = err + 2 * se), width = 0.05) +
+  geom_function(fun = function(n) 0.055 * n^(-1 / 3), linetype = "dotted", color = INK) +
+  scale_x_log10() + scale_y_log10() + scale_color_manual(values = COL[2:3]) +
+  labs(x = "n", y = "|E cos M_n - E cos X|", title = "Rate n^(-1/3)") + theme_paper
+fig_osc <- p_osc1 | p_osc2
+save_fig(fig_osc, "fig_oscillator"); fig_osc
+```
+
+```{r session}
+sessionInfo()
+```

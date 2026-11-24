@@ -143,7 +143,7 @@ A BibTeX entry will be added once the publication details are available.
   author = {Manou-Abi, Solym M. and Ouedraogo, Abdoul F.},
   title = {Stable Approximation of Sums of Heavy-Tailed Martingale Differences
            and Markov Chains via Stein's Method},
-  note = {Preprint}
+  note = {Preprint 2026}
 }
 ```
 
